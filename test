@@ -1,1 +1,862 @@
-test
+<?php
+ini_set('memory_limit', '2048M'); 
+date_default_timezone_set('Asia/calcutta');
+require_once ("common.php");
+require_once ('dbConn.php');
+
+
+class callHandlerMultipleServers {  
+	public $time_start, $cmd_1, $flag_1, $total_bits,$nodesNameArray,$node_detail,$trans_node_detail;
+    
+	public function __construct($userid = null, $from_date = null, $to_date = null , $mblno = null , $type = 0) {
+		$this->time_start = microtime(true);
+    $this->nodesNameArray = $this->createObdNodesArr();  
+    /************** for latching ***********/
+    //$this->nodesNameArray = $this->createObdNodesArr('','latch');  
+    /************************8*************/     
+		$this->executeCall(0);    
+	}
+
+  public function recursive_array_search($needle,$haystack,$return_type = 'url') { 
+    foreach($haystack as $key=>$value) {                 
+        if(array_search($needle,$value) <> ''){  return $value[$return_type]; }
+        
+    } 
+    return false; 
+  }
+
+  public function createObdNodesArr($type = '', $node_type = '') { // $type : trans, promo, semi-trans  ; $node_type : latch, non-latch
+    //latching conditions
+    $latch_cond = ''; 
+    if($node_type == 'latch'){
+        $latch_cond = " and is_latching= '1' ";
+    } else {
+        $latch_cond = " and is_latching= '0' ";
+    }
+    
+    $obdnodesRes = mysql_query("SELECT * FROM obdnodes WHERE is_enable='1' and bit_nodes = '1' ".$latch_cond." ORDER BY node_id");  
+    $allArrayNodes = $transArrayNodes = $promoArrayNodes = array();		   
+	  while ($res = mysql_fetch_assoc($obdnodesRes)) {   
+            $arr_name = $res['node_name'].'_arr';          
+            ${$arr_name} = array();
+            if($res['is_transactional'] == 1){
+                  $transArrayNodes[$res['node_name']] =  $arr_name;   
+            } else {
+                  $promoArrayNodes[$res['node_name']] =  $arr_name;    
+            }                         
+    } 
+
+    if($type == 'trans'){
+        return $transArrayNodes;
+    } else if($type == 'promo'){
+        return $promoArrayNodes;
+    } else {
+        $allArrayNodes = array_merge($promoArrayNodes,$transArrayNodes);
+        return $allArrayNodes;
+    }
+  }
+  
+  public function getRandDefaultNode($allNodesArr) {        
+        $rand_node = array_rand($allNodesArr);                
+        $data_arr = array();
+        $key = in_array($rand_node, $this->node_detail);
+        foreach($this->node_detail as $key=>$value) { // search node by array search 
+            if($value['node_name'] == $rand_node) {  
+                  $this->node_detail[$key]['node_capacity']--;    
+    	            $node_name = $value['node_name'];
+                  $dir_path = $value['url'];
+                  $node_url = $value['url'];
+                  $node_name_arr = $node_name.'_arr';
+            }
+        } 
+        $data_arr = array('node_name' => $node_name, 'dir_path' => $dir_path, 'node_url' => $node_url, 'node_name_arr' => $node_name_arr);
+        return $data_arr;
+  }
+                                 
+  public function getAllTransNode($node_type = null) {  
+      $obdnodesRes = mysql_query('select * from obdnodes');	
+      $total_bits = mysql_num_rows($obdnodesRes); //18
+      $transNodes = array(); 
+      $obdnodesRes = mysql_query("SELECT * FROM obdnodes WHERE is_enable='1' and is_transactional='1' ORDER BY node_id");  		   
+	    while ($res = mysql_fetch_assoc($obdnodesRes)) { 
+                  $transNodes[$res['node_id']] = $res['node_id'];  
+      }  
+      return serialize($transNodes);
+      exit;
+  }
+
+  public function getAllPromoNode($node_type = null) {  
+      $obdnodesRes = mysql_query('select * from obdnodes');	
+      $total_bits = mysql_num_rows($obdnodesRes); //18
+      $transNodes = array(); 
+      $obdnodesRes = mysql_query('SELECT * FROM obdnodes WHERE is_enable=\'1\' and is_transactional=\'0\' ORDER BY node_id');  		   
+	    while ($res = mysql_fetch_assoc($obdnodesRes)) { 
+            $transNodes[$res['node_id']] = $res['node_id'];  
+      }  
+      return serialize($transNodes);
+      exit;
+  }
+
+  public function getAllUsersDistributionType($node_type = null) {        	
+      $total_bits = $this->total_bits ;       
+      $transNodes = $promoNodes = $latchNodes =  $transPromoNodes = $transLatchNodes = array(); 
+      $obdnodesRes = mysql_query('SELECT * FROM obdnodes WHERE is_enable=\'1\' ORDER BY node_id');  		   
+	    while ($res = mysql_fetch_assoc($obdnodesRes)) { 
+          if($res['is_transactional'] == '1') {
+                  $transNodes[$res['node_id']] = $res['node_id'];     
+          } else {
+                  $promoNodes[$res['node_id']] = $res['node_id'];   
+          }
+      }  
+       
+      $transNodesString = $promoNodeBinString = $latchNodeBinString = $transPromoNodeBinString = $transLatchNodeBinString = '';
+      for($i=1; $i<=$total_bits;$i++) {
+            if(in_array($i, $transNodes)) {
+              $transNodesString .= '1';
+            } else {
+              $transNodesString .= '0';
+            } 
+            
+            if(in_array($i, $promoNodes)){
+              $promoNodeBinString .= '1';
+            } else {
+              $promoNodeBinString .= '0';
+            }    
+       }    
+       if($node_type == 'trans'){    
+            return bindec(strrev($transNodesString));
+       } else {
+            return bindec(strrev($promoNodeBinString));
+       }
+       exit;       
+  }
+  
+  public function getGeneralDistributionType($node_type = null) {        	
+      $total_bits = $this->total_bits ;       
+      $transNodes = $promoNodes = $latchNodes =  $transPromoNodes = $transLatchNodes = array(); 
+      $obdnodesRes = mysql_query('SELECT * FROM obdnodes WHERE is_enable=\'1\' and is_latching=\'0\' ORDER BY node_id');  		   
+	    while ($res = mysql_fetch_assoc($obdnodesRes)) { 
+              $genNodes[$res['node_id']] = $res['node_id'];               
+      }  
+       
+      $genNodeBinString = '';
+      for($i=1; $i<=$total_bits;$i++) {
+            if(in_array($i, $genNodes)){
+              $genNodeBinString .= '1';
+            } else {
+              $genNodeBinString .= '0';
+            }    
+       }    
+       return bindec(strrev($genNodeBinString));
+       exit;       
+  }
+  
+  public function getDefaultNodeValues(){
+      $obdnodesRes = mysql_query('select * from obdnodes where is_latching=\'0\' and is_enable=\'1\' order by node_id');
+			$i=0;
+			$total_bits = mysql_num_rows($obdnodesRes)+1;    			
+  }
+  
+  public function getEnabledNodeValues(){
+      $obdnodesRes = mysql_query('select * from obdnodes where is_enable=\'1\' order by node_id');
+		  $total_bits = mysql_num_rows($obdnodesRes)+1;    
+  }
+  
+  public function getVideoconNodeValues(){
+  }
+
+  public function getTotalBits() {
+        $obdnodesRes = mysql_query('select * from obdnodes');
+        $this->total_bits = mysql_num_rows($obdnodesRes); //18    
+  }
+  
+  public function executeCall($call_type=0) {           
+		$this->cmd_1 = "ps -eaf | grep /htdocs/utils/callHandlerMultipleServers.php | awk {'print $2\" \"$3'}";
+		$flag_1 = checkinstance($this->cmd_1); 
+    $node_name = $node_name_arr = '';
+    $allTransNodes = $this->createObdNodesArr('trans');
+    $allPromoNodes = $this->createObdNodesArr('promo');
+                            
+    $this->getTotalBits();
+    $total_bits = $this->total_bits; 
+   
+    if ($flag_1) {   
+	        $node_capacity = 0;
+					$this->trans_node_detail = $this->node_detail = array();  
+					$server_hour = date('H:i:s');
+          $transcond = '';
+          if (strtotime($server_hour) >= strtotime('20:55:00') || strtotime($server_hour) <= strtotime('09:01:00') ) {
+              $transcond = " and is_transactional='1' "; 
+          }
+          $obdnodesRes = mysql_query("select * from obdnodes where is_latching='".$call_type."' and is_enable='1' ".$transcond."  order by node_id"); 		
+					$i=0;
+					       
+					while ($res = mysql_fetch_assoc($obdnodesRes)) {
+						$res['actual_node_capacity'] = $res['node_capacity'];
+						$this->node_detail[$res['bit_order']] = $res;
+						$i++;
+						$node_capacity += $res['node_capacity'];
+					} 
+					$node_capacity = ($node_capacity * MULTIPLIER);
+	  									   
+  			  $sql = "select id,node_id,to_number,status,campaign_id,no_of_retry,retry_count,sms_params,user_id,priority,tts_data,max_latch_duration,bparty,actionurl,tried_on,root_id from reports where status in ('5','25') and (bparty is null or bparty='' or bparty ='0') order by campaign_id desc limit $node_capacity"; 
+				            
+					$result = mysql_query($sql); 
+          $loop = 0; 
+          
+					while (mysql_num_rows($result) > 0) {
+            $this->nodesNameArray = $this->createObdNodesArr();  
+            
+            foreach($this->nodesNameArray as $key => $value){
+                $arr_name  = $this->nodesNameArray[$key];
+                ${$arr_name} = array();            
+            }               
+                   
+						$trans_node_count = $node_count = 0;
+						$camp_status_ids = array();
+						
+           	$distribution_value = 0; 
+            $nodeincval = 1;
+            
+						while ($row = mysql_fetch_assoc($result)) {                
+                  
+							if (isset($row['to_number']) && $row['to_number'] != '') {
+								if ($node_count > (count($this->node_detail) - 1))
+									$node_count = 0;
+								
+								$numberId = $row['id'];
+								$number = $row['to_number'];
+								$campaignId = $row['campaign_id'];
+								$number_status = $row['status'];
+						    $sql_camp = "select campaigns.distribution_type,campaigns.is_httpbulkinsert,campaigns.No_of_retry,campaigns.vendor_id,campaigns.template_id,campaigns.campaign_type,campaigns.status,campaigns.maxduration,campaigns.actionurl,campaigns.is_approved,messages.response_data_length,messages.response_retry,messages.wait_duration,campaigns.buffer_status,users.username,users.onAttemptFlag,users.user_category,messages.message,messages.send_after from campaigns left join messages on messages.campaign_mapping_id=campaigns.campaign_mapping_id inner join users on campaigns.user_id = users.id where campaigns.id='" . $campaignId . "'"; 															
+                 
+								$result_camp = mysql_query($sql_camp);
+								$response_retry_count = '';
+								$wait_duration = '';
+								$response_data_length = '';
+								$data_camp_res_array = $data_camp = array();
+								
+                
+								if (mysql_num_rows($result_camp) > 0) {
+									while ($data_camp_array = mysql_fetch_assoc($result_camp)) {
+										$data_camp_res_array[] = $data_camp_array;
+										if ($data_camp_array['send_after'] == 0 || $data_camp_array['send_after'] == null)
+											$data_camp = $data_camp_array;
+									}
+                  
+                  
+				          ######################## setting up values#######################################################################
+									if (isset($data_camp['response_retry']) and $data_camp['response_retry'] != '')
+										$response_retry_count = $data_camp['response_retry'];
+									if (isset($data_camp['wait_duration']) and $data_camp['wait_duration'] != '')
+										$wait_duration = $data_camp['wait_duration'];
+									if (isset($data_camp['response_data_length']) and $data_camp['response_data_length'] != '')
+										$response_data_length = $data_camp['response_data_length'];
+									if ($response_retry_count == '')
+										$response_retry_count = RESPONSE_RETRY;
+									if ($wait_duration == '')
+										$wait_duration = WAIT_DURATION;
+									if ($response_data_length == '')
+										$response_data_length = RESPONSE_DATA_LENGTH;
+
+									if (isset($data_camp['maxduration']) and $data_camp['maxduration'] != '' and $data_camp['maxduration'] > 0)
+										$maxduration = $data_camp['maxduration'];
+									else
+										$maxduration = 28;
+									if ($row['no_of_retry'] != 0)
+										$no_of_retry = $row['no_of_retry'];
+									else
+										$no_of_retry = $data_camp['No_of_retry'];
+                  
+                  $no_of_retry = 0; //to support Asterisk first party call forwarding  
+									$campStatus = $data_camp['status'];  
+									$user_id_tn_array = strtolower(substr($data_camp_res_array['0']['username'], 0, 3));
+                  $is_approved = $data_camp_res_array['0']['is_approved'];
+									$campHttpbulkinsert = $data_camp['is_httpbulkinsert'];
+									if ($campStatus != '1' && $campStatus != '3' && $campHttpbulkinsert != '1') {
+										if ($user_id_tn_array=='tn-' && $is_approved=='0'){
+											//if (!in_array($campaignId, $camp_status_ids))
+											//$camp_status_ids[] = $campaignId;
+										} else {
+										 if (!in_array($campaignId, $camp_status_ids))
+                                    $camp_status_ids[] = $campaignId;
+										}
+									}
+									$db_action_url = '';
+									$actionurl = $actionFlag = '';  
+                  $actionurlflag = 0;
+                  
+									if ((isset($data_camp_res_array[0]['message']) && ($data_camp_res_array[0]['message'] != '' && $data_camp_res_array[0]['message'] != null)) || (isset($data_camp_res_array[1]['message']) && ($data_camp_res_array[1]['message'] != '' && $data_camp_res_array[1]['message'] != null))) { 
+  										if(trim($row['actionurl']) != '' && $row['actionurl'] != null)
+  										{
+  												$actionFlag = $this->convertUrlQuery($row['actionurl'], 'actionFlag');
+  												$db_action_url = 'clientURL=' . base64_encode($row['actionurl']);
+  										}
+  										else
+  										{
+  												$actionFlag = '2';
+  												$db_action_url = '';
+  										}
+                      $actionurlflag = 1;   
+									} elseif (trim($row['actionurl']) != '' && $row['actionurl'] != null) {
+										$actionFlag = $this->convertUrlQuery($row['actionurl'], 'actionFlag');
+										$db_action_url = $row['actionurl'];
+                    $actionurlflag = 1;   
+									} elseif (trim($data_camp['actionurl']) != '' && $data_camp['actionurl'] != null) {
+										$actionFlag = $this->convertUrlQuery($data_camp['actionurl'], 'actionFlag');
+										$db_action_url = $data_camp['actionurl'];
+                    $actionurlflag = 1;   
+									}
+
+                  
+                  
+                  
+									$variable_part = "&Call_Id=" . $row['id'] . "&C_Id=" . $campaignId . "&triedon=" . urlencode(date('Y-m-d H:i:s')) . "&retry_count=" . $row['retry_count'].'&priority='.$row['priority'];
+                  //DLRURL
+									
+                  $dlrurl =  FIXEDPARAMETERS . $variable_part . '&onAttemptFlag=' . $data_camp['onAttemptFlag'] . '&actionFlag=' .$actionFlag;
+								
+									$actionvariable_part = "&lastVoiceClip=%l&Call_Id=" . $row['id'] . "&C_Id=" . $campaignId . "&user_id=" . $data_camp['username']. "&triedon=" . urlencode(date('Y-m-d H:i:s')) . "&retry_count=" . $row['retry_count'] . "&sms_params=%p&clipplayedcount=&actionFlag=".$actionFlag;
+                  
+									if ($db_action_url != '') {
+										if (strpos($db_action_url, "?") !== false)
+											$db_action_url = $db_action_url . "&";
+										else
+											$db_action_url = $db_action_url . "?";
+									}
+									else
+									{
+                      $db_action_url='';
+                	}
+									$actionurl_fixed = $db_action_url . str_replace('&node_id=%n','',FIXEDPARAMETERS);
+																		
+									if(($row['actionurl'] != '' && $row['actionurl'] != null) || ($data_camp['actionurl'] != '' && $data_camp['actionurl'] != null) || $actionurlflag == 1) {
+                        $actionurl = $actionurl_fixed . $actionvariable_part;			
+                  }
+                  
+									$user_category = $data_camp['user_category'] != '' ? $data_camp['user_category'] : 1;
+                  
+                  ###################### retry if condition begins ########################################################################
+                  
+                  if ($row['node_id'] != '') {   
+                          
+                          file_put_contents('/opt/log.txt', date('Y-m-d H:i:s')." retry debug : ".$campaignId." : ".$number." : ".$row['id']." : retry node name : ".$row['node_id']."\n", FILE_APPEND);  
+                          
+                          #########################  fetch node details for retry numbers #################################################              
+													$dir_path = $node_url = $this->recursive_array_search($row['node_id'], $this->node_detail);
+                          $node_name_arr = $row['node_id'].'_arr';
+                          $node_name = $row['node_id'];   
+                          
+                          //if retry node is disabled find random default node                          
+                          if(!in_array($node_name.'_arr', $this->nodesNameArray)) {  
+                                file_put_contents('/opt/log.txt', date('Y-m-d H:i:s')." retry debug : ".$campaignId." : ".$number." : ".$row['id']." : node is not enabled :".$row['node_id']."\n", FILE_APPEND);
+                                
+                                /*************** retry node is disabled get the appropriate node from distribution type ***********/
+                                $distribution_value = str_pad(decbin($data_camp['distribution_type']),$total_bits,'0',STR_PAD_LEFT);                    
+                                
+                                $bitsPosArr = array();
+              									foreach($this->stringToArray(strrev($distribution_value)) as $pos=>$value) {
+              										if($value == '1'){
+              										  $bitsPosArr[$pos+1] = $pos+1;                          
+              										}
+              									}  
+                                 
+              	                $bitsPosArr  = array_intersect_key($bitsPosArr,$this->node_detail);  	
+                                
+                                file_put_contents('/opt/log.txt', date('Y-m-d H:i:s')." retry debug : ".$campaignId." : ".$number." : ".$row['id']." : enabled nodes array :".serialize($bitsPosArr)."\n", FILE_APPEND);     
+                                //if bitsPosArr is empty it means no node id available for this campaign so we will assign a default random node to it.
+                                
+                              	if(empty($bitsPosArr)){    
+                                        file_put_contents('/opt/log.txt', date('Y-m-d H:i:s')." retry debug : ".$campaignId." : ".$number." : ".$row['id']." : no node found, get default node list \n", FILE_APPEND);                              
+                                      	$data_camp['distribution_type'] = $this->getGeneralDistributionType();   
+                              	        $distribution_value = str_pad(decbin($data_camp['distribution_type']),$total_bits,'0',STR_PAD_LEFT);
+                              	        $bitsPosArr = array();
+                                      	foreach($this->stringToArray(strrev($distribution_value)) as $pos=>$value) {
+                                              	if($value == '1'){
+                              	                     $bitsPosArr[$pos+1] = $pos+1;
+                                      	        }
+                              	        }    
+                                        $bitsPosArr  = array_intersect_key($bitsPosArr,$this->node_detail);
+                              	} 
+                                file_put_contents('/opt/log.txt', date('Y-m-d H:i:s')." retry debug : ".$campaignId." : ".$number." : ".$row['id']." : number status : ".$number_status." \n", FILE_APPEND);              
+                                
+                                //check number status - for trans number remove all promo node and for promo number remove all trans nodes.
+                                if($number_status == 25) { //trans
+                              			$trans_nodes = $this->getAllPromoNode();
+                              			$transNodes = unserialize($trans_nodes);
+                              			foreach($transNodes as $key => $value){
+                              				unset($bitsPosArr[$key]);
+                              			}
+                              			
+                              	} else if ($number_status == 5) { //promo
+                              			$trans_nodes = $this->getAllTransNode();
+                              			$transNodes = unserialize($trans_nodes);
+                              			foreach($transNodes as $key => $value){
+                              				unset($bitsPosArr[$key]);
+                              			}			
+                              	}    
+                                          
+                                $totalNodesAvailable = count($bitsPosArr);                                
+                                
+                                if(!empty($bitsPosArr)) {    
+                  									foreach($bitsPosArr as $key=>$value) {  
+                  										  if(isset($this->node_detail[$value]['node_capacity']) && $this->node_detail[$value]['node_capacity'] > 0){                          
+                  												$this->node_detail[$value]['node_capacity']--;    
+                  												$node_name = $this->node_detail[$value]['node_name'];
+                                          $dir_path = $this->node_detail[$value]['url'];
+                  			                  $node_url = $this->node_detail[$value]['url'];                              
+                  												break;
+                  										  }
+                  										  $totalNodesAvailable--;
+                  									}        
+                                    if($totalNodesAvailable == 0) { //reinitiate node capacity
+                  										  foreach($bitsPosArr as $key=>$value){      
+                  												$this->node_detail[$value]['node_capacity'] = $this->node_detail[$value]['actual_node_capacity'];                          
+                  										  }
+                  										  
+                  										  foreach($bitsPosArr as $key=>$value){      
+                  											  if($this->node_detail[$value]['node_capacity'] > 0){
+                  													$this->node_detail[$value]['node_capacity']--;    
+                  		                      $dir_path = $this->node_detail[$value]['url'];
+                                            $node_name = $this->node_detail[$value]['node_name'];
+                                            $node_url = $this->node_detail[$value]['url'];                                  
+                  													break;
+                  											  }
+                  										 }
+                  									} 
+                                } else {      /****  if $bitsPosArr is empty when all trans nodes are disbale assign random promo node ****/   
+                                              file_put_contents('/opt/log.txt', date('Y-m-d H:i:s')." retry debug : ".$campaignId." : ".$number." : ".$row['id']." : no appropriate node  found : ".$number_status." \n", FILE_APPEND);                                         
+                                              $data_arr = $this->getRandDefaultNode($allTransNodes);//trans, promo                               
+                                              $node_name = $data_arr['node_name'];
+                                              $dir_path = $data_arr['dir_path'];
+                                              $node_url = $data_arr['node_url'];
+                                              $node_name_arr = $data_arr['node_name_arr'];              
+                                }
+                                
+                                if(!in_array($node_name.'_arr', $this->nodesNameArray)) {  
+                                        file_put_contents('/opt/log.txt', date('Y-m-d H:i:s')." retry debug : ".$campaignId." : ".$number." : ".$row['id']." : error caught : ".$number_status." \n", FILE_APPEND);  
+                                        $data_arr = $this->getRandDefaultNode($allTransNodes);//trans, promo                               
+                                        $node_name = $data_arr['node_name'];
+                                        $dir_path = $data_arr['dir_path'];
+                                        $node_url = $data_arr['node_url'];
+                                        $node_name_arr = $data_arr['node_name_arr'];  
+                                }                                
+                                $node_name_arr = $node_name.'_arr';
+                                /**************************************************************************************************/                                                 
+                          }                                                                                                         
+                                    
+                          ${$this->nodesNameArray[$node_name]}[$nodeincval++]  = array(
+              														"campaignId" => $campaignId,
+              														"toNumber" => $number,
+              														"priority" => $row['priority'],
+              														"url" => urlencode($dlrurl),
+              														"response_retry_count" => $response_retry_count,
+              														"wait_duration" => $wait_duration,
+              														"response_data_length" => $response_data_length,
+              														"tts_data" => $row['tts_data'],
+              														"actionURL" => urlencode($actionurl),
+              														"max_duration" => $maxduration,
+              														"no_of_retry" => $no_of_retry,
+              														"destNo" => $row['bparty'],
+              														"max_latch_duration" => $row['max_latch_duration'],
+              														"buffer_status" => $data_camp['buffer_status'],
+              														"user_category" => $user_category,
+              														"node_id" => $node_name,
+              														"dir_path" => $node_url,
+                            							"report_id" => $row['id'],
+                            							"node_url" =>$node_url	
+              														);                                                                        
+  								} else {   
+                          ######################## setting up distribution values #######################################################################                  
+        									if(isset($data_camp['distribution_type']) && $data_camp['distribution_type'] !=1 && $data_camp['distribution_type'] !=0 && $data_camp['distribution_type']!=null){   
+        										$distribution_value = str_pad(decbin($data_camp['distribution_type']),$total_bits,'0',STR_PAD_LEFT);                       
+        									} else {                      
+        										$distribution_value = str_pad(decbin($data_camp['distribution_type']),$total_bits,'0',STR_PAD_LEFT);                    
+        									}
+        				          
+        									$bitsPosArr = array();
+        									foreach($this->stringToArray(strrev($distribution_value)) as $pos=>$value) {
+        										if($value == '1'){
+        										  $bitsPosArr[$pos+1] = $pos+1;                          
+        										}
+        									}  
+        
+        	                $bitsPosArr  = array_intersect_key($bitsPosArr,$this->node_detail);  	                            
+                         
+        	                //if bitsPosArr is empty it means no node id available for this campaign so we will assign a default promo node to it.
+                        	if(empty($bitsPosArr)){
+                                	$data_camp['distribution_type'] = $this->getAllUsersDistributionType('promo');
+                        	        $distribution_value = str_pad(decbin($data_camp['distribution_type']),$total_bits,'0',STR_PAD_LEFT);
+                        	        $bitsPosArr = array();
+                                	foreach($this->stringToArray(strrev($distribution_value)) as $pos=>$value) {
+                                        	if($value == '1'){
+                        	                     $bitsPosArr[$pos+1] = $pos+1;
+                                	        }
+                        	        }
+                                  $bitsPosArr  = array_intersect_key($bitsPosArr,$this->node_detail);
+                        	} 
+                              
+                        	if($number_status == 25) { //trans
+                        			$trans_nodes = $this->getAllPromoNode();
+                        			$transNodes = unserialize($trans_nodes);
+                        			foreach($transNodes as $key => $value){
+                        				unset($bitsPosArr[$key]);
+                        			}
+                        			
+                        	} else if ($number_status == 5) { //promo
+                        			$trans_nodes = $this->getAllTransNode();
+                        			$transNodes = unserialize($trans_nodes);
+                        			foreach($transNodes as $key => $value){
+                        				unset($bitsPosArr[$key]);
+                        			}			
+                        	}
+                                 
+        				          $totalNodesAvailable = count($bitsPosArr);
+                          //print_r($bitsPosArr);
+                          
+                          if(!empty($bitsPosArr)) { 
+              									foreach($bitsPosArr as $key=>$value) {  
+              										  if(isset($this->node_detail[$value]['node_capacity']) && $this->node_detail[$value]['node_capacity'] > 0){                          
+              												$this->node_detail[$value]['node_capacity']--;    
+              												$node_name = $this->node_detail[$value]['node_name'];
+                                      $dir_path = $this->node_detail[$value]['url'];
+              			                  $node_url = $this->node_detail[$value]['url'];                              
+              												break;
+              										  }
+              										  $totalNodesAvailable--;
+              									}        
+                                if($totalNodesAvailable == 0) { //reinitiate node capacity
+              										  foreach($bitsPosArr as $key=>$value){      
+              												$this->node_detail[$value]['node_capacity'] = $this->node_detail[$value]['actual_node_capacity'];                          
+              										  }
+              										  
+              										  foreach($bitsPosArr as $key=>$value){      
+              											  if($this->node_detail[$value]['node_capacity'] > 0){
+              													$this->node_detail[$value]['node_capacity']--;    
+              		                      $dir_path = $this->node_detail[$value]['url'];
+                                        $node_name = $this->node_detail[$value]['node_name'];
+                                        $node_url = $this->node_detail[$value]['url'];                                  
+              													break;
+              											  }
+              										 }
+              									} 
+                          } else {      /****  if $bitsPosArr is empty assign random promo node ****/                                                        
+                                        $data_arr = $this->getRandDefaultNode($allPromoNodes);//trans, promo                               
+                                        $node_name = $data_arr['node_name'];
+                                        $dir_path = $data_arr['dir_path'];
+                                        $node_url = $data_arr['node_url'];
+                                        $node_name_arr = $data_arr['node_name_arr'];              
+                          }
+                                        
+                          
+                          if(!in_array($node_name.'_arr', $this->nodesNameArray)) {  
+                                        $data_arr = $this->getRandDefaultNode($allPromoNodes);//trans, promo                               
+                                        $node_name = $data_arr['node_name'];
+                                        $dir_path = $data_arr['dir_path'];
+                                        $node_url = $data_arr['node_url'];
+                                        $node_name_arr = $data_arr['node_name_arr'];  
+                          }
+                          
+                          /*echo "Node name : ".$node_name."</br>";
+                          echo "Bits pos array : "; 
+                          print_r($bitsPosArr);    
+                          echo "</br>";
+                          */  
+                           $node_name_arr = $node_name.'_arr';      
+        									#################################################################################################################
+                  							
+                  
+                  
+                  $server_hour = date('H:i:s');
+                  
+									if (strtotime($server_hour) >= strtotime('20:59:00') || strtotime($server_hour) <= strtotime('09:01:00') || in_array($data_camp_res_array['0']['username'], unserialize(VCALLZ_24HOURS_TRANS_PRI_USERNAME))) {  
+      											/***  to be executed betweem 9pm to 9 am ***/ 
+                            if(!in_array($node_name.'_arr', $allTransNodes))  {                            
+                                $data_arr = $this->getRandDefaultNode($allTransNodes);//trans, promo                               
+                                $node_name = $data_arr['node_name'];
+                                $dir_path = $data_arr['dir_path'];
+                                $node_url = $data_arr['node_url'];
+                                $node_name_arr = $data_arr['node_name_arr'];
+                            } 
+                            
+                            if ($data_camp['user_category'] == '1' && $data_camp['buffer_status'] == '0') {   
+            											$campaign_type_status = $data_camp['campaign_type'] == '0' ? '0xxx' : '0xxx-0xxx';
+            											$sql_dlr_after_9PM_befour_9AM = "INSERT INTO dlrs SET report_id='" . $row['id'] . "' , status='" . $campaign_type_status . "' , tried_on='" . $row['tried_on'] . "', delivered_on=NOW(),campaign_id='" . $campaignId."',to_number='".$row['to_number']."',duration='0',credit_used='0',user_id='".$row['user_id']."',root_id='".$row['root_id']."'";
+            											$sql_report_after_9PM_befour_9AM = 'UPDATE reports SET status= \'6\'  WHERE id= \'' . $row['id'] . '\'';
+            											mysql_query($sql_dlr_after_9PM_befour_9AM);
+            											$this->mysql_catchquery($sql_report_after_9PM_befour_9AM);     
+        										} else {                  
+            											if ($user_id_tn_array!='' && $user_id_tn_array == 'tn-' && $user_category != '1' && $is_approved == '1') { 
+                                    //file_put_contents('/opt/trans_test_log1.txt', date('Y-m-d H:i:s')." : Call handler debugging - no 3 : ".$number." : ".$node_name." \n", FILE_APPEND);   
+                                    //file_put_contents('/opt/trans_test_log2.txt', $number."\n", FILE_APPEND);                                            
+                                    ${$this->nodesNameArray[$node_name]}[$nodeincval++]  = array(
+                  													"campaignId" => $campaignId,
+                  													"toNumber" => $number,
+                  													"priority" => $row['priority'],
+                  													"url" => urlencode($dlrurl),
+                  													"response_retry_count" => $response_retry_count,
+                  													"wait_duration" => $wait_duration,
+                  													"response_data_length" => $response_data_length,
+                  													"tts_data" => $row['tts_data'],
+                  													"actionURL" => urlencode($actionurl),
+                  													"max_duration" => $maxduration,
+                  													"no_of_retry" => $no_of_retry,
+                  													"destNo" => $row['bparty'],
+                  													"max_latch_duration" => $row['max_latch_duration'],
+                  													"buffer_status" => '1',
+                  													"user_category" => $user_category,
+                  													"node_id" => $node_name,
+                  													"dir_path" => $dir_path,
+                  												  "node_url" =>$node_url,
+                  													"report_id" => $row['id']
+                  												);
+            											}
+        										}
+        										##############################################    
+									} else {  /***  to be executed betweem 9am to 9 pm ***/  
+                             
+										if ($user_id_tn_array!='' && $user_id_tn_array == 'tn-' && $user_category != '1' && $number_status == '25' && $is_approved == '1') {  
+									        // add a function for finding random nodes  
+                                             
+                          if(!in_array($node_name.'_arr', $allTransNodes))  {                            
+                                $data_arr = $this->getRandDefaultNode($allTransNodes);//trans, promo                               
+                                $node_name = $data_arr['node_name'];
+                                $dir_path = $data_arr['dir_path'];
+                                $node_url = $data_arr['node_url'];
+                                $node_name_arr = $data_arr['node_name_arr'];
+                          }                                       
+                              
+                          //file_put_contents('/opt/trans_test_log1.txt', date('Y-m-d H:i:s')." : Call handler debugging - no 2 : ".$number." : ".$node_name." \n", FILE_APPEND);         
+                          //file_put_contents('/opt/trans_test_log2.txt', $number."\n", FILE_APPEND);         
+                          ${$this->nodesNameArray[$node_name]}[$nodeincval++] = array(
+            												"campaignId" => $campaignId,
+            												"toNumber" => $number,
+            												"priority" => $row['priority'],
+            												"url" => urlencode($dlrurl),
+            												"response_retry_count" => $response_retry_count,
+            												"wait_duration" => $wait_duration,
+            												"response_data_length" => $response_data_length,
+            												"tts_data" => $row['tts_data'],
+            												"actionURL" => urlencode($actionurl),
+            												"max_duration" => $maxduration,
+            												"no_of_retry" => $no_of_retry,
+            												"destNo" => $row['bparty'],
+            												"max_latch_duration" => $row['max_latch_duration'],
+            												"buffer_status" => '1',
+            												"user_category" => $user_category,
+            												"node_id" => $node_name,
+            												"dir_path" => $dir_path,
+            												"report_id" => $row['id'],
+            									      "node_url" =>$node_url
+            											);                                             
+										} else {    //file_put_contents('/opt/trans_test_log1.txt', date('Y-m-d H:i:s')." : Call handler debugging - no 1 : ".$number." : ".$node_name." \n", FILE_APPEND); 
+                                //file_put_contents('/opt/trans_test_log2.txt', $number."\n", FILE_APPEND);              
+                                ${$this->nodesNameArray[$node_name]}[$nodeincval++] = array(
+                														"campaignId" => $campaignId,
+                														"toNumber" => $number,
+                														"priority" => $row['priority'],
+                														"url" => urlencode($dlrurl),  
+                														"response_retry_count" => $response_retry_count,
+                														"wait_duration" => $wait_duration,
+                														"response_data_length" => $response_data_length,
+                														"tts_data" => $row['tts_data'],
+                														"actionURL" => urlencode($actionurl),
+                														"max_duration" => $maxduration,
+                														"no_of_retry" => $no_of_retry,
+                														"destNo" => $row['bparty'],
+                														"max_latch_duration" => $row['max_latch_duration'],
+                														"buffer_status" => $data_camp['buffer_status'],
+                														"user_category" => $user_category,
+                														"node_id" => $node_name,
+                														"dir_path" => $dir_path,
+                														"report_id" => $row['id'],
+                														"node_url" =>$node_url														
+                														); 
+										}
+									}
+                  
+                  }
+								} else { 
+									$sql3 = $this->mysql_catchquery("update reports set status=2,tried_on='" . date('Y-m-d H:i:s') . "' where id='" . $row['id'] . "'");
+									break;
+								}
+							} else { 
+								mysql_query("delete from reports where id='" . $row['id'] . "'");
+								continue;
+							}  
+              
+                                   
+						} 
+              /*echo "Node name Array :".$loop;
+              print_r('<pre>');
+              print_r(${$node_name_arr});
+              print_r('</pre>');                  
+              $loop++  ;        */
+            
+           
+            $obdNodesArr = $this->createObdNodesArr();
+            $i=0;
+            $final_array = array(); 
+            foreach ($obdNodesArr as $key => $value){
+                 if(!empty(${$value})){
+                      $final_array = array_merge($final_array,(array_chunk(${$value}, PACKETSIZE, true)));
+                }
+            }
+            $chunck_post_data = array();
+            /*echo "Final Array :";
+            print_r('<pre>');
+            print_r($final_array);
+            print_r('</pre>');
+            exit;   */
+						             
+            //file_put_contents('/opt/trans_test_log3.txt', date('Y-m-d H:i:s')." : Call handler debugging  : URL 1 : ".serialize($final_array)." \n\n" );
+						$chunck_post_data = $final_array;
+            
+            $urls = array();           
+						foreach ($chunck_post_data as $j => $post_data_val) {
+            
+                foreach ($post_data_val as $xml_key => $dataarray)  { 
+  								$urls[$j]['report_ids'][$xml_key] = $dataarray['report_id'];
+                }
+  							if (!empty($post_data_val))  {
+                    $urls[$j] = array('post' => (DATA_FORMAT == 'xml' ? $this->array2xml($post_data_val, "voice_data") : json_encode($post_data_val)), 'node_id' => $post_data_val[$xml_key]['node_id'],'node_url' => $post_data_val[$xml_key]['node_url'], 'report_ids' => $urls[$j]['report_ids'], 'user_id' => $data_camp_res_array['0']['username'], 'dir_path' => $post_data_val[$xml_key]['dir_path']);                    		  							
+  							    $this->mysql_catchquery('UPDATE reports SET status=\'1\',tried_on=\'' . date('Y-m-d H:i:s') . '\' where id in (' . implode(',', $urls[$j]['report_ids']) . ')'); 
+                 }              
+						}
+                
+						//file_put_contents('/opt/trans_test_log.txt', date('Y-m-d H:i:s')." : Call handler debugging  : URL 2 :".serialize($urls)." \n", FILE_APPEND);
+						if (!empty($urls)) {                  
+                    $this->createXML($urls, $camp_status_ids, $this->node_detail);							
+						}
+             
+            //print_r($camp_status_ids);
+            if(!empty($camp_status_ids)){
+                  $this->mysql_catchquery('UPDATE campaigns SET status=\'1\',start_time=\'' . date('Y-m-d H:i:s') . '\' where id in (' . implode(',', $camp_status_ids) . ')');
+            } 
+						$result = mysql_query($sql);     
+					}
+		}
+	}
+  
+  function createXML($urls, $camp_status_ids, $node_detail) {
+	$fileNameArr = array();
+        //file_put_contents(LOG_FILE, date('Y-m-d H:i:s')." Call handler debugging  : ".serialize($urls)." \n", FILE_APPEND);
+
+        foreach ($urls as $cnt => $urlval) { 
+      	      if(!array_key_exists($urlval['dir_path'], $fileNameArr)){
+                  $fileNameArr[$urlval['dir_path']] = uniqid().'_'.$urlval['dir_path'].'__'.floor(microtime(true));
+                  file_put_contents("/opt/numberFiles/".$fileNameArr[$urlval['dir_path']].".xml", '<parent>', FILE_APPEND);
+      	      }
+              file_put_contents("/opt/numberFiles/".$fileNameArr[$urlval['dir_path']].".xml", $urlval['post'], FILE_APPEND);
+        }
+	
+      	foreach($fileNameArr as $key => $value){
+              file_put_contents("/opt/numberFiles/".$fileNameArr[$key].".xml", '</parent>', FILE_APPEND);
+              if(is_file("/opt/numberFiles/".$fileNameArr[$key].".xml") && filesize("/opt/numberFiles/".$fileNameArr[$key].".xml") > 0){
+                  $zip = new ZipArchive();
+                  $zip->open('/opt/numberFiles/'.$value.'.zip', ZipArchive::CREATE);
+                  $zip->addFile('/opt/numberFiles/'.$value.'.xml', $value.'.xml');
+                  $zip->close();
+                  $output = shell_exec('mv /opt/numberFiles/'.$value.'.zip  /opt/'.$key );
+                  file_put_contents(LOG_FILE, date('Y-m-d H:i:s')." Call handler debugging : filename : ".$value.".zip \n", FILE_APPEND);
+                  unlink("/opt/numberFiles/".$fileNameArr[$key].".xml");
+              }
+      	}
+  }
+
+
+	public function ia2xml($array) {
+		$xml = "";
+		foreach ($array as $key => $value) {
+			if (is_array($value)) {  
+				$xml.="<row>" . $this->ia2xml($value) . "</row>";
+			} else {
+				if ($key != 'node_id') {
+        
+            if ($key == 'report_id') {
+              //file_put_contents("/opt/trans_test_log.txt", date('Y-m-d H:i:s')." : inside array to iaxml : Report ID: ".$value." \n\n", FILE_APPEND);
+            }              
+					//if ($key != 'report_id') {
+						$xml.="<$key>" . $value . "</$key>";
+					//}
+				} else {
+            //file_put_contents("/opt/trans_test_log.txt", date('Y-m-d H:i:s')." : inside array to iaxml  : Node ID: ".$value." ------ ", FILE_APPEND);
+        }
+			}
+		}   
+		return $xml;
+	}
+
+	public function array2xml($array, $tag) {
+  
+		$node_ids = array_values($array);
+		if (isset($node_ids[0]['node_id'])) {
+			$node_id = $node_ids[0]['node_id'];
+    } else { 
+      $node_id = 'LAD077P16_3';
+      //file_put_contents("/opt/trans_test_log.txt", date('Y-m-d H:i:s')." : Inside array to xml : default node 77 : Node ID: ".$node_id." \n\n", FILE_APPEND); 
+    }   
+    
+		//simplexml_load_string("<$tag><node_id>$node_id</node_id>" . ia2xml($array) . "</$tag>");    
+		return ("<$tag><node_id>$node_id</node_id>" . $this->ia2xml($array) . "</$tag>");
+	}
+
+	public function pr($data) {
+		echo '<pre>';
+		print_r($data);
+		echo '</pre>';
+		//die;
+	}
+
+	public function convertUrlQuery($dlr_url, $value=null) {
+		$params = array();
+		if($dlr_url!='')
+		{
+			parse_str(parse_url($dlr_url, PHP_URL_QUERY),$params);
+			return ($value != null ? $params[$value] : 2);               
+		}
+		else
+			return 2; 
+	}
+
+	public function mysql_catchquery($query) {
+		if ($result = mysql_query($query))
+			return $result;
+		else {
+			usleep(500000);
+			$this->mysql_catchquery($query);
+		}
+	}
+
+
+	public function stringToArray($s) {
+		$r = array();
+		for($i=0; $i<strlen($s); $i++) 
+			 $r[$i] = $s[$i];
+		return $r;
+	}
+
+	public function in_array_r($needle, $haystack, $strict = false) {
+		foreach ($haystack as $key=>$item) {
+			if (($strict ? $item === $needle : $item == $needle) || (is_array($item) && $this->in_array_r($needle, $item, $strict))) {
+				return $key;
+			}
+		}
+
+		return false;
+	}
+  
+
+}
+  function pr($value){
+      print_r('<pre>');
+      print_r($value);
+      print_r('</pre>');
+      
+  }
+$time_start = microtime(true);  
+$obj = new  callHandlerMultipleServers();
+$time_end = microtime(true);
+$time = $time_end - $time_start;
+
+?>
